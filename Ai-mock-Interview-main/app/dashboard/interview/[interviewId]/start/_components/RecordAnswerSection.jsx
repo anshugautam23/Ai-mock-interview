@@ -6,13 +6,13 @@ import React, { useContext, useEffect, useState, useRef } from "react";
 import Webcam from "react-webcam";
 import { Mic } from "lucide-react";
 import { toast } from "sonner";
-import { chatSession } from "@/utils/GeminiAIModal";
+import { generateContentWithFallback, sendMessageWithFallback } from "@/utils/GeminiAIModal";
+import { parseJsonResponse } from "@/utils/jsonResponse";
 import { db } from "@/utils/db";
 import { UserAnswer } from "@/utils/schema";
 import { useUser } from "@clerk/nextjs";
 import moment from "moment";
 import { WebCamContext } from "@/app/dashboard/layout";
-import { GoogleGenerativeAI } from "@google/generative-ai";
 
 const RecordAnswerSection = ({
   mockInterviewQuestion,
@@ -26,8 +26,6 @@ const RecordAnswerSection = ({
   const { webCamEnabled, setWebCamEnabled } = useContext(WebCamContext);
   const mediaRecorderRef = useRef(null);
   const chunksRef = useRef([]);
-
-  const genAI = new GoogleGenerativeAI(process.env.NEXT_PUBLIC_GEMINI_API_KEY);
 
   useEffect(() => {
     if (!isRecording && userAnswer.length > 10) {
@@ -70,15 +68,14 @@ const RecordAnswerSection = ({
   const transcribeAudio = async (audioBlob) => {
     try {
       setLoading(true);
-      const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
-      
+
       // Convert audio blob to base64
       const reader = new FileReader();
       reader.readAsDataURL(audioBlob);
       reader.onloadend = async () => {
         const base64Audio = reader.result.split(',')[1];
-        
-        const result = await model.generateContent([
+
+        const result = await generateContentWithFallback([
           "Transcribe the following audio:",
           { inlineData: { data: base64Audio, mimeType: "audio/webm" } },
         ]);
@@ -106,21 +103,9 @@ const RecordAnswerSection = ({
         " please give us rating for answer and feedback as area of improvement if any " +
         "in just 3 to 5 lines to improve it in JSON format with rating field and feedback field";
 
-      const result = await chatSession.sendMessage(feedbackPrompt);
+      const result = await sendMessageWithFallback(feedbackPrompt);
 
-      let MockJsonResp = result.response.text();
-      console.log(MockJsonResp);
-
-      // Removing possible extra text around JSON
-      MockJsonResp = MockJsonResp.replace("```json", "").replace("```", "");
-
-      // Attempt to parse JSON
-      let jsonFeedbackResp;
-      try {
-        jsonFeedbackResp = JSON.parse(MockJsonResp);
-      } catch (e) {
-        throw new Error("Invalid JSON response: " + MockJsonResp);
-      }
+      const jsonFeedbackResp = parseJsonResponse(result.response.text());
 
       const resp = await db.insert(UserAnswer).values({
         mockIdRef: interviewData?.mockId,

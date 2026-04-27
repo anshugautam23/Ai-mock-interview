@@ -209,7 +209,13 @@ import {
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { chatSession } from "@/utils/GeminiAIModal";
+import {
+  isGeminiBusyError,
+  isGeminiQuotaError,
+  getGeminiRetryDelayMs,
+  sendMessageWithFallback,
+} from "@/utils/GeminiAIModal";
+import { parseJsonResponse } from "@/utils/jsonResponse";
 import { LoaderCircle, Plus, Sparkles, BriefcaseIcon, FileTextIcon, StarIcon } from "lucide-react";
 import { db } from "@/utils/db";
 import { MockInterview } from "@/utils/schema";
@@ -231,23 +237,22 @@ const AddNewInterview = () => {
   const generateWithRetry = async (prompt, maxRetries = 3) => {
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
-        const result = await chatSession.sendMessage(prompt);
+        const result = await sendMessageWithFallback(prompt);
         return result;
       } catch (error) {
-        const errorMsg = error?.message || "";
-        
-        const isHighDemand = errorMsg.includes("503") || 
-                            errorMsg.includes("high demand") ||
-                            errorMsg.includes("overloaded");
+        const isHighDemand = isGeminiBusyError(error);
 
         if (!isHighDemand || attempt === maxRetries) {
-          throw error; // Re-throw if not retryable or last attempt
+          throw error;
         }
 
-        // Exponential backoff: 2s, 4s, 8s
-        const delay = Math.pow(2, attempt) * 1000;
-        console.log(`Gemini busy (attempt ${attempt}/${maxRetries}). Retrying in ${delay}ms...`);
-        
+        // Honor the retryDelay hint from Gemini (e.g. "7s") when present.
+        const apiRetryDelay = getGeminiRetryDelayMs(error);
+        const delay = apiRetryDelay
+          ? apiRetryDelay + 500
+          : Math.pow(2, attempt) * 1000;
+        console.log(`AI model busy (attempt ${attempt}/${maxRetries}). Retrying in ${delay}ms...`);
+
         await new Promise(resolve => setTimeout(resolve, delay));
       }
     }
@@ -273,6 +278,7 @@ Return ONLY a valid JSON array in this format:
     "Answer": "Detailed answer here"
   }
 ]
+Escape any newline characters inside JSON strings.
 Do not include any other text or explanation.
 `;
 
@@ -280,14 +286,13 @@ Do not include any other text or explanation.
       const result = await generateWithRetry(InputPrompt);
       
       const rawText = result.response.text();
-      
-      // Improved JSON extraction
-      const jsonMatch = rawText.match(/\[[\s\S]*\]/);
-      const MockJsonResp = jsonMatch ? jsonMatch[0].trim() : null;
 
-      if (!MockJsonResp) {
-        throw new Error("Failed to extract valid JSON from AI response");
+      const parsedQuestions = parseJsonResponse(rawText);
+      if (!Array.isArray(parsedQuestions) || parsedQuestions.length === 0) {
+        throw new Error("Failed to generate valid interview questions");
       }
+
+      const MockJsonResp = JSON.stringify(parsedQuestions);
 
       // Save to database
       const resp = await db
@@ -315,8 +320,14 @@ Do not include any other text or explanation.
 
       const errorMsg = error?.message || "";
       
-      if (errorMsg.includes("503") || errorMsg.includes("high demand")) {
-        alert("Gemini AI is currently experiencing high demand.\n\nPlease wait 10-20 seconds and try again.");
+      if (isGeminiQuotaError(error)) {
+        alert(
+          "Gemini free-tier quota exhausted for today on the configured API key(s). " +
+          "Add another key to NEXT_PUBLIC_GEMINI_API_KEYS in .env.local (comma-separated), " +
+          "or wait for the daily reset / upgrade your plan."
+        );
+      } else if (isGeminiBusyError(error)) {
+        alert("The AI service is currently busy. Please wait a few seconds and try again.");
       } else {
         alert("Failed to generate interview questions. Please check your inputs and try again.");
       }

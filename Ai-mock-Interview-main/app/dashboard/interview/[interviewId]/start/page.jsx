@@ -8,6 +8,7 @@ import QuestionSection from "./_components/QuestionSection";
 import RecordAnswerSection from "./_components/RecordAnswerSection";
 import { Button } from "@/components/ui/button";
 import Link from "next/link";
+import { parseJsonResponse } from "@/utils/jsonResponse";
 
 const StartInterview = ({ params }) => {
   const [interviewData, setInterviewData] = useState();
@@ -23,10 +24,19 @@ const StartInterview = ({ params }) => {
       .from(MockInterview)
       .where(eq(MockInterview.mockId, params.interviewId));
 
-    const jsonMockResp = JSON.parse(result[0].jsonMockResp);
-    console.log(jsonMockResp);
-    setMockInterviewQuestion(jsonMockResp);
-    setInterviewData(result[0]);
+    if (!result[0]) {
+      return;
+    }
+
+    try {
+      const jsonMockResp = parseJsonResponse(result[0].jsonMockResp);
+      setMockInterviewQuestion(jsonMockResp);
+      setInterviewData(result[0]);
+    } catch (error) {
+      console.error("Failed to parse interview questions:", error);
+      setInterviewData(result[0]);
+      setMockInterviewQuestion([]);
+    }
   };
 
   return (
