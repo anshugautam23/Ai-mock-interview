@@ -9,6 +9,7 @@ import {
 import { db } from "@/utils/db";
 import { Question } from "@/utils/schema";
 import { eq } from "drizzle-orm";
+import { parseJsonResponse } from "@/utils/jsonResponse";
 
 const page = ({ params }) => {
   const [questionData, setQuestionData] = useState();
@@ -23,7 +24,12 @@ const page = ({ params }) => {
       .select()
       .from(Question)
       .where(eq(Question.mockId, params.pyqId));
-      const questionData = JSON.parse(result[0].MockQuestionJsonResp);
+
+      if (!result[0]) {
+        return;
+      }
+
+      const questionData = parseJsonResponse(result[0].MockQuestionJsonResp);
     setQuestionData(questionData);
     // console.log("data", questionData);
   };
